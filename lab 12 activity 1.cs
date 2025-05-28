@@ -1,5 +1,4 @@
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
 
@@ -21,15 +20,73 @@ namespace LexicalAnalyzerV1
         }
     }
 
+    class Symbol
+    {
+        public string Name;
+        public string Type;
+        public string Scope;
+        public int Size;
+        public int Line;
+        public int Column;
+        public string Kind;
+
+        public Symbol(string name, string type, string scope, int size, int line, int column, string kind)
+        {
+            Name = name;
+            Type = type;
+            Scope = scope;
+            Size = size;
+            Line = line;
+            Column = column;
+            Kind = kind;
+        }
+    }
+
+    class SymbolTable
+    {
+        private List<Symbol> table = new List<Symbol>();
+
+        public void Add(string name, string type, string scope, int size, int line, int col, string kind)
+        {
+            if (Contains(name, scope))
+            {
+                Console.WriteLine($"ERROR: Redeclaration of variable '{name}' at line {line}, column {col}");
+                throw new Exception();
+            }
+
+            table.Add(new Symbol(name, type, scope, size, line, col, kind));
+        }
+
+        public bool Contains(string name, string scope)
+        {
+            foreach (var sym in table)
+            {
+                if (sym.Name == name && sym.Scope == scope)
+                    return true;
+            }
+            return false;
+        }
+
+        public void Display()
+        {
+            Console.WriteLine("\n--- SYMBOL TABLE ---");
+            Console.WriteLine("Name\tType\tScope\tSize\tLine\tCol\tKind");
+            foreach (var sym in table)
+            {
+                Console.WriteLine($"{sym.Name}\t{sym.Type}\t{sym.Scope}\t{sym.Size}\t{sym.Line}\t{sym.Column}\t{sym.Kind}");
+            }
+        }
+    }
+
     class Program
     {
         static List<string> keywordList = new List<string> { "int", "float", "while", "main", "if", "else", "new" };
-        static Regex variable_Reg = new Regex(@"^[A-Za-z_][A-Za-z0-9]*$");
-        static Regex constants_Reg = new Regex(@"^[0-9]+([.][0-9]+)?([e]([+|-])?[0-9]+)?$");
         static Regex operators_Reg = new Regex(@"^[-*+/><&|=]$");
         static Regex Special_Reg = new Regex(@"^[.,'\[\]{}();:?]$");
 
         static List<Token> tokens = new List<Token>();
+        static SymbolTable symTable = new SymbolTable();
+        static int currentToken = 0;
 
         static void Main(string[] args)
         {
@@ -37,16 +94,12 @@ namespace LexicalAnalyzerV1
             string userInput = "";
             string line;
 
-            // Read multi-line input
             while ((line = Console.ReadLine()) != null && line != "")
             {
                 userInput += line + "\n";
             }
 
-            // Lexical Analysis
             TokenizeAndPrint(userInput);
-
-            // Parser
             ParseTokens();
         }
 
@@ -98,7 +151,7 @@ namespace LexicalAnalyzerV1
                     continue;
                 }
 
-                // Number
+                // Digit
                 if (char.IsDigit(c))
                 {
                     int start = i;
@@ -122,7 +175,7 @@ namespace LexicalAnalyzerV1
                     continue;
                 }
 
-                // Punctuation/Special
+                // Punctuation
                 if (Special_Reg.IsMatch(c.ToString()))
                 {
                     Console.WriteLine($"< punc, {c} >");
@@ -131,15 +184,12 @@ namespace LexicalAnalyzerV1
                     continue;
                 }
 
-                // Unknown character
+                // Unknown
                 Console.WriteLine($"ERROR: {c} at line {line_num}");
                 tokens.Add(new Token("error", c.ToString(), line_num, col_num));
                 i++; col_num++;
             }
         }
-
-        // --- PARSER ---
-        static int currentToken = 0;
 
         static Token Peek() => currentToken < tokens.Count ? tokens[currentToken] : null;
         static Token Next()
@@ -156,7 +206,7 @@ namespace LexicalAnalyzerV1
                 string found = t == null ? "EOF" : t.Value;
                 string errMsg = $"ERROR: {found} at line {(t?.Line ?? tokens[tokens.Count - 1].Line)}, column {(t?.Column ?? tokens[tokens.Count - 1].Column)}; Expected {expected ?? type.ToUpper()}";
                 Console.WriteLine(errMsg);
-                throw new Exception(); // stop further parsing after first error
+                throw new Exception();
             }
             Next();
         }
@@ -170,10 +220,12 @@ namespace LexicalAnalyzerV1
                 {
                     ParseStatement();
                 }
+
+                symTable.Display();
             }
             catch
             {
-                // Stop after first syntax error
+                // Error already printed
             }
         }
 
@@ -185,13 +237,24 @@ namespace LexicalAnalyzerV1
             if (t.Type == "keyword" && t.Value == "int")
             {
                 Next();
+                var idToken = Peek();
                 Expect("id", null, "IDENTIFIER");
-                Expect("op", "=", "EQUALS SIGN"); // FIXED: Expect '=' as operator, not punctuation
+
+                symTable.Add(idToken.Value, "int", "global", 4, idToken.Line, idToken.Column, "variable");
+
+                Expect("op", "=", "EQUALS SIGN");
                 ParseExpression();
                 Expect("punc", ";", "SEMICOLON");
             }
             else if (t.Type == "id")
             {
+                var idToken = Peek();
+                if (!symTable.Contains(idToken.Value, "global"))
+                {
+                    Console.WriteLine($"ERROR: Undeclared variable '{idToken.Value}' at line {idToken.Line}, column {idToken.Column}");
+                    throw new Exception();
+                }
+
                 Next();
                 if (Peek() != null && Peek().Type == "op" && Peek().Value == "=")
                 {
@@ -220,6 +283,12 @@ namespace LexicalAnalyzerV1
             var t = Peek();
             if (t != null && (t.Type == "id" || t.Type == "digit"))
             {
+                if (t.Type == "id" && !symTable.Contains(t.Value, "global"))
+                {
+                    Console.WriteLine($"ERROR: Undeclared variable '{t.Value}' at line {t.Line}, column {t.Column}");
+                    throw new Exception();
+                }
+
                 Next();
                 if (Peek() != null && Peek().Type == "op")
                 {
